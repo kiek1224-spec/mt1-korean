@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: feedback
   originSessionId: 78197005-a275-43e3-a636-a0b18e7cd816
-  modified: 2026-09-12T17:19:29.312Z
+  modified: 2026-09-28T15:27:18.076Z
 ---
 
 Windows PowerShell 5.1 에서
@@ -17,6 +17,13 @@ Windows PowerShell 5.1 에서
 **How to apply:** 파일 내용 수정은 항상 Edit / Write 도구로 한다. PowerShell 은
 명령 실행용으로만 쓴다. 스크립트를 인라인으로 넘길 때도 here-string 이 `%` 서식
 문자열을 파서 오류로 만드니(`print("%-14s" ...)`) **파일로 써서 실행**할 것.
+
+**Bash 도 마찬가지다.** 따옴표가 든 긴 소스를 `cat > f <<'EOF'` 힘든독으로 쓰면
+`bash: -c: line N: unexpected EOF while looking for matching` 로 **파일이 아예 안 써진다**
+(2026-09-21 [[jeep4x4-blender]] 에서 300줄짜리 파이썬을 이렇게 날렸다). 새 파일은 Write,
+부분 수정은 Edit. 힘든독은 짧은 일회용 패치 스크립트까지만.
+2026-09-29 에는 `<<'EOF'` 힘든독 안의 파이썬 `'\\n'` 이 `'\n'`(줄바꿈)으로 줄어 그림에 엉뚱한 글자가 찍혔다.
+백슬래시가 든 코드는 Write 로 파일을 쓰거나 `chr(92)` 로 적을 것.
 
 **Why:** 이 프로젝트 소스는 주석이 전부 한글이라 정면으로 걸린다.
 [[smb1-godot-port]] 작업 중 실제로 두 파일을 날려 다시 썼다.

@@ -42,6 +42,12 @@ DOCS = {"mt1-hangul-memory.md": "docs/mt1-hangul-memory.md",
         os.path.join("작업롬파일", "VERSIONS.md"): os.path.join("작업롬파일", "VERSIONS.md")}
 MEMORY = ["mt1-hangul-project.md", "mt1-hangul-romdiff-method.md", "mt1-pareido-automap.md",
           "mt1-ds-window.md", "bizhawk-second-screen.md", "powershell-utf8-trap.md"]
+# ★2026-10-08 롬 해석 공략 페이지(사용자 결정: 같이 올리되 롬에서 뽑은 악마 그림은 빼고). index.html 은 --no-sprites 로 새로 만든다.
+GUIDE = {os.path.join("공략사이트", "make_guide.py"): os.path.join("guide", "make_guide.py"),
+         os.path.join("공략사이트", "capture_sprites.py"): os.path.join("guide", "capture_sprites.py")}
+# ★2026-10-08 Claude 메모 사본에서 빼는 줄(배포와 무관한 사적인 분석·구상). 줄에 이 말이 있으면 통째로 뺀다.
+PRIVATE_MARKERS = ("lamu", "티카페", "유입", "retrodb", "대형공사", "타일 예산 제약", "참고 측정", "MT2(")
+PUBLIC_IDS = ("kiek1224-spec",)          # 공개 GitHub 계정(저장소 주소) — 사용자 이름 검사에서 뺀다
 BLOCK_EXT = (".nes", ".fc", ".smc", ".sfc", ".mss", ".zip", ".bps", ".7z")
 BASE_ROM = "mt1_m191_v3.nes"
 
@@ -97,12 +103,32 @@ def main():
     for s, d in DOCS.items():
         copy(os.path.join(WORK, s), os.path.join(out, d))
         n += 1
+    for s_, d_ in GUIDE.items():
+        copy(os.path.join(WORK, s_), os.path.join(out, d_))
+        n += 1
+    gpage = os.path.join(out, "guide", "index.html")
+    import subprocess
+    r = subprocess.run([sys.executable, os.path.join(WORK, "공략사이트", "make_guide.py"), kor_p, "--no-sprites", "--out", gpage],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+    assert r.returncode == 0, "공략 페이지 생성 실패: " + r.stdout[-1500:] + r.stderr[-1500:]
+    _g = open(gpage, encoding="utf-8").read()
+    assert 'class="sprbox"' not in _g and "data:image/png;base64" in _g, "공략 페이지에 악마 그림이 들어갔거나 지도가 없다"
+    print("공략 페이지 guide/index.html %.0f KB (악마 그림 없음)" % (len(_g.encode("utf-8")) / 1024.0))
+    n += 1
     mem = glob.glob(os.path.join(home, ".claude", "projects", "*", "memory", "mt1-hangul-project.md"))
     assert mem, "Claude 메모리 폴더를 못 찾았다"
     memdir = os.path.dirname(mem[0])
     for f in MEMORY:
         copy(os.path.join(memdir, f), os.path.join(out, "docs", "claude-memory", f))
         n += 1
+    for f in MEMORY:
+        mp = os.path.join(out, "docs", "claude-memory", f)
+        lines = open(mp, encoding="utf-8").read().split("\n")
+        keep = [l for l in lines if not any(m in l for m in PRIVATE_MARKERS)]
+        if len(keep) != len(lines):
+            open(mp, "w", encoding="utf-8", newline="").write("\n".join(keep))
+            print("메모 사본 %s: 사적인 줄 %d개 뺌" % (f, len(lines) - len(keep)))
     print("복사 %d개 -> %s" % (n, out))
 
     fixed = []
@@ -140,7 +166,10 @@ def main():
                 bad.append("막힌 확장자 " + os.path.relpath(p, out))
                 continue
             try:
-                if user.lower() in open(p, "rb").read().decode("utf-8", "ignore").lower():
+                _t = open(p, "rb").read().decode("utf-8", "ignore").lower()
+                for _pid in PUBLIC_IDS:
+                    _t = _t.replace(_pid.lower(), "")
+                if user.lower() in _t:
                     bad.append("사용자 이름 " + os.path.relpath(p, out))
             except OSError:
                 pass

@@ -11,12 +11,17 @@
 --   표식 (모양으로도 구별되게 그린다)
 --     노랑 꽉 찬 네모 = 올라가는 계단      파랑 꽉 찬 네모 = 내려가는 계단
 --     초록 꽉 찬 네모 = 엘리베이터
---     주황 속 빈 네모 = 보물상자
---     분홍 점         = 대화 NPC (상점·회복의 샘·사교의 관·장로 포함)
+--     주황 속 빈 네모 = 보물상자          보라 속 빈 네모 = 아메지스트
+--     하늘 점         = 정보·글(INFO)     분홍 점         = 사람·이벤트 (장로 포함)
+--     분홍빨강 집     = 사교의 관 (2026-10-03 따로 표시)
+--     금색 작은 네모  = 가게(라그의 가게 포함)
+--     청록 +          = 회복의 샘          흰 ▲            = 여신상
 --     빨강 ✕          = 고정 전투 (밟으면 반드시 시작 - 보스 자리 포함)
 --     보라 꽉 찬 마름모 = 텔레포트 칸 (밟으면 순간이동)
 --     보라 속 빈 마름모 = 텔레포트 도착 칸
 --     흰 선 = 벽 / 하늘 선 = 문 / 주황빨강 네모와 화살표 = 나와 가는 쪽
+--   ★2026-10-02 공략집(dds.opatil.com FC판 「表」 층 지도 49장)과 칸 단위로 대조해 고쳤다:
+--     올라가는 계단 자리, 텔레포트에 가린 보스, 대화 칸 종류, 이음매로 층 잇기(아래 「이음매」).
 --
 --   ★화면에 글자는 하나도 안 찍는다. `emu.drawString` 이 실기에서 화면 왼쪽에 글자를
 --     세로로 흘리고 지도 밖 게임 화면에까지 찍혔다(사용자 보고 2026-09-12).
@@ -30,15 +35,23 @@
 --   포인터표: 뱅크$09 $AAF5, 블록 6개 x 포인터 14개. 레이어id = 포인터번호*2.
 --   각 표는 $FF 또는 **다음 포인터 주소**에서 끝난다.
 --     레이어 $0A  5바이트 [X][Y|플래그][도착X][도착Y][구역]
---                 = 내려가는 계단, 도착지 = 올라가는 계단
---                 (검증: 도착지 72곳 전부 레이어 $08 출발점과 ±1 안에서 맞물린다)
+--                 = 내려가는 계단 (고정뱅크 $FB62, 층 -1). 레이어 $08 = 올라가는 계단 ($FA30, 층 +1)
+--                 ★계단 자리는 **출발 칸**이다. 도착 칸은 반대쪽 계단 칸과 대개 같지만 1곳은 옆 칸이라
+--                   (95,12)에 한 칸 어긋나 찍혔었다(2026-10-02 공략집 대조로 고침).
 --     레이어 $10  앞에 길이 바이트, 그 뒤 4바이트 [X][Y|플래그][탑][층]
 --                 = 엘리베이터가 서는 칸. $FCB7 이 칸 속성을 볼 때 이걸 조회한다.
 --                 (검증: 층 값이 층표 상위 4비트와 23/25 일치)
---     레이어 $16  6바이트 [X][Y|플래그][종류][..][..][..]
---                 종류 32 = 보물상자, 그 밖 = 대화 칸 (28 회복의 샘 / 1 사교의 관 / 4 상점 /
---                 15 장로 도 대화 칸으로 묶는다). ★5바이트로 읽으면 쓰레기가 나온다.
---     레이어 $14  3바이트 [X][Y|플래그][값] = 고정 전투
+--     레이어 $16  6바이트 [X][Y|플래그][종류][..][..][..]   ★5바이트로 읽으면 쓰레기가 나온다.
+--                 종류 = 디스패치 표 고정뱅크 $F544 의 번호. 공략집 아이콘과 대조한 뜻:
+--                 32 보물상자 / 7 INFO 59곳 / 13 아메지스트 / 27 여신상 / 28 회복의 샘 / 4·6 가게·라그의 가게,
+--                 1 사교의 관(처리기 $F5E3, 이 값 하나뿐), 그 밖(15 장로, 사람들)은 사람·이벤트.
+--                 ★Y 바이트 위 두 비트는 **조건**이다(조회 $E295 의 $E2E9~, 레이어 $16 일 때만 — 2026-10-03 확인):
+--                   0x40 = $07FF bit7 이 0 일 때만, 0x80 = 1 일 때만 있는 칸(156칸 중 25칸). 이야기 진행으로
+--                   다이달로스 탑의 가게·회복의 샘·사교의 관·상자 등이 자리를 옮긴다. 전에는 두 상태를 겹쳐 찍어
+--                   없는 가게가 보이고 사교의 관 자리에 다른 표식이 났다(사용자 보고) -> 상태마다 따로 만들고
+--                   그릴 때 RAM $07FF 를 보고 고른다.
+--     레이어 $14  3바이트 [X][Y|플래그][값] = 고정 전투. 값 8~15 = 블록 세트 6개 x 8곳의 번호
+--                 (48곳 모두 공략집 해골 자리와 일치)
 --     레이어 $0E  6바이트 [X][Y|플래그][도착X][도착Y][도착블록][도착층] = 텔레포트 (2026-09-14)
 --                 ★이것은 **게임 코드로 확인**했다: 고정뱅크 $FC3A `LDA #$0E / LDY #$04 / JSR $F51B`
 --                 가 지금 칸을 표에서 찾고, 있으면 뒤 4바이트를 $0780(X) $0781(Y) $0782(블록)
@@ -46,8 +59,15 @@
 --                 (안 맞는 2곳은 도착 칸 층표가 0 = 특수 구역).
 --   ★$16·$14 의 **형식**(칸 수·지도 범위)은 검증했지만, "상자·대화·고정전투"라는 **뜻**은
 --     사이트 해석이고 우리가 게임 속에서 확인한 것은 아니다.
---   겹치는 칸은: 상자·대화 -> 엘리베이터 -> 계단이 덮어쓰고, 그 뒤 텔레포트 출발 -> 도착 ->
---   고정 전투 순서로 빈 칸에만 찍는다(텔레포트 칸과 겹치는 고정 전투 1곳은 텔레포트로 보인다).
+--   겹치는 칸은: 상자·대화 -> 엘리베이터 -> 계단이 덮어쓰고, 그 뒤 고정 전투 -> 텔레포트 출발 ->
+--   도착 순서로 빈 칸에만 찍는다(발할라 (79,11) 은 보스와 텔레포트가 같은 칸 - 보스를 보여 준다).
+--
+-- 이음매 (2026-10-02, 게임 코드로 확인)
+--   레이어 $18  7바이트 [X][Y|플래그][방향][도착X][도착Y][층][블록]. 고정뱅크 $F823 이 걸음 뒤 지금 칸을
+--   찾고, 보는 방향($0490: 1북 2동 3남 4서)이 같으면 위치를 (도착X,도착Y)로, $055D(층)·$0782(블록)를 바꾼다.
+--   즉 롬 칸 (X,Y)에 그 방향으로 들어서는 걸음은 실제로는 (도착X,도착Y)로 간다. 게임 속 층은 8x8 구획을
+--   이렇게 이어 붙인 모양이다(공략집 지도와 같다 - 다이달로스 1층 = 롬 (24..31,8..15) + (32..47,0..7)).
+--   ★도착이 (56,12) 인 항목은 $F873 이 던전 번호별 표로 바꿔치기하므로 잇기에서 뺀다.
 --
 -- 층표 (고정뱅크 CPU $CB7D, 16x8 = 8x8 블록마다 1바이트)
 --   상위 4비트 = 층, 하위 4비트 = 탑. 게임도 $CA69 `LDA $CB7D,X / LSR x4 / CMP $055D`
@@ -57,9 +77,14 @@
 --
 -- 구역
 --   1) 걸어서 오갈 수 있는 칸을 묶는다. 두 칸 사이는 **양쪽 기록이 다 뚫림(0)이나 문(3)**일
---      때만 잇는다(한쪽만 보면 99.1% 불일치 자리로 새어 넘는다).
---   2) 층표 바이트가 다른 블록 사이는 잇지 않는다(지도에선 붙어 있어도 게임 속에선 다른 층).
---   3) 그 묶음이 닿는 8x8 블록들 = 화면에 보여 줄 구역.
+--      때만 잇는다(한쪽만 보면 99.1% 불일치 자리로 새어 넘는다. 2026-10-02 에 이음매와 같이 다시
+--      시험해도 한쪽만 보면 공략집과 220칸이 어긋나고 자리 충돌이 생겼다).
+--      이음매가 있는 걸음은 롬 옆 칸 대신 이음매 도착 칸으로 잇는다(그쪽은 내 쪽 면만 본다).
+--   2) 층표 바이트가 다른 블록 사이는 잇지 않는다(지도에선 붙어 있어도 게임 속에선 다른 층.
+--      다른 던전으로 넘어가는 이음매도 여기서 끊긴다).
+--   3) 칸마다 게임 속 자리를 정한다: 롬 옆 칸이면 롬 좌표 그대로, 이음매를 건너면 건너간 구획을 옮긴다.
+--      그 묶음이 닿는 (8x8 블록, 옮긴 거리) 들 = 화면에 보여 줄 구역. 블록은 통째로 그린다.
+--      구역 220 -> 203, 자리 충돌 0. 이은 모양은 공략집 49장과 칸 단위로 맞는다.
 --
 -- 지도 (2026-09-08 역어셈블·실측으로 확정)
 --   PRG 뱅크 $0A. 읽는 코드는 고정뱅크 $CAA4~$CAD9:  주소 = $8004 + X + Y*$80  (128 x 64)
@@ -85,17 +110,30 @@ local C_ME                            = 0xFF6040
 
 local KIND_UP, KIND_DOWN, KIND_ELEV, KIND_CHEST, KIND_NPC, KIND_FIGHT = 1, 2, 3, 4, 5, 6
 local KIND_WARP, KIND_WARPTO = 7, 8
--- {색, 모양}  모양: fill 꽉 찬 네모 / box 속 빈 네모 / dot 점 / cross ✕ / diamond 마름모 / odiamond 속 빈 마름모
+local KIND_INFO, KIND_SHOP, KIND_SPRING, KIND_STATUE, KIND_AMETHYST = 9, 10, 11, 12, 13
+local KIND_JAKYOU = 14
+local KIND_LAST = 14
+-- {색, 모양}  모양: fill 꽉 찬 네모 / box 속 빈 네모 / dot 점 / coin 작은 꽉 찬 네모 / plus + / tri ▲ /
+--             cross ✕ / diamond 마름모 / odiamond 속 빈 마름모   (mt1_ds_window.py 와 같은 색)
 local KIND_STYLE = {
-  [KIND_UP]     = {0xFFE040, "fill"},
-  [KIND_DOWN]   = {0x4070FF, "fill"},
-  [KIND_ELEV]   = {0x40E080, "fill"},
-  [KIND_CHEST]  = {0xFF9020, "box"},
-  [KIND_NPC]    = {0xFF70D0, "dot"},
-  [KIND_FIGHT]  = {0xFF3030, "cross"},
-  [KIND_WARP]   = {0xB070FF, "diamond"},
-  [KIND_WARPTO] = {0xB070FF, "odiamond"},
+  [KIND_UP]       = {0xFFE040, "fill"},
+  [KIND_DOWN]     = {0x4070FF, "fill"},
+  [KIND_ELEV]     = {0x40E080, "fill"},
+  [KIND_CHEST]    = {0xFF9020, "box"},
+  [KIND_AMETHYST] = {0xD070FF, "box"},
+  [KIND_INFO]     = {0x8FD3FF, "dot"},
+  [KIND_NPC]      = {0xFF70D0, "dot"},
+  [KIND_SHOP]     = {0xFFC040, "coin"},
+  [KIND_SPRING]   = {0x40F0E0, "plus"},
+  [KIND_JAKYOU]   = {0xFF5C8A, "house"},
+  [KIND_STATUE]   = {0xF4F4F4, "tri"},
+  [KIND_FIGHT]    = {0xFF3030, "cross"},
+  [KIND_WARP]     = {0xB070FF, "diamond"},
+  [KIND_WARPTO]   = {0xB070FF, "odiamond"},
 }
+-- 레이어 $16 종류 값 -> 표식 (그 밖 = 사람·이벤트)
+local L16_KIND = { [32] = KIND_CHEST, [7] = KIND_INFO, [4] = KIND_SHOP, [6] = KIND_SHOP,
+                   [28] = KIND_SPRING, [27] = KIND_STATUE, [13] = KIND_AMETHYST, [1] = KIND_JAKYOU }
 
 local PRG = emu.memType.nesPrgRom
 local RAM = emu.memType.nesMemory
@@ -148,56 +186,6 @@ local OPP = {[0] = 2, 3, 0, 1}
 local function sideOf(c, s) return (c >> (s * 2)) & 3 end
 local function passable(v) return v == 0 or v == 3 end
 
--- ── 구역 계산 ─────────────────────────────────────────────────────────────
-local comp       = {}   -- [칸번호] = 묶음 번호
-local compN      = {}   -- [묶음] = 칸 수
-local compBlocks = {}   -- [묶음] = { [블록번호] = true }
-local compBox    = {}   -- [묶음] = {x0, y0, x1, y1}  8격자에 맞춘 상자(x1,y1 은 끝+1)
-local ncomp      = 0
-
-for i = 0, MAP_W * MAP_H - 1 do comp[i] = -1 end
-for sy = 0, MAP_H - 1 do
-  for sx = 0, MAP_W - 1 do
-    local si = sy * MAP_W + sx
-    if comp[si] < 0 then
-      local cid = ncomp
-      ncomp = ncomp + 1
-      comp[si] = cid
-      local stack, top = {si}, 1
-      local n, x0, y0, x1, y1 = 0, sx, sy, sx, sy
-      local blocks = {}
-      while top > 0 do
-        local i = stack[top]
-        stack[top] = nil
-        top = top - 1
-        local x, y = i % MAP_W, i // MAP_W
-        n = n + 1
-        if x < x0 then x0 = x end
-        if y < y0 then y0 = y end
-        if x > x1 then x1 = x end
-        if y > y1 then y1 = y end
-        blocks[blockOf(x, y)] = true
-        local c = MAP[i]
-        for s = 0, 3 do
-          local nx, ny = x + DX[s], y + DY[s]
-          if nx >= 0 and nx < MAP_W and ny >= 0 and ny < MAP_H then
-            local j = ny * MAP_W + nx
-            if comp[j] < 0 and passable(sideOf(c, s)) and passable(sideOf(MAP[j], OPP[s]))
-               and sameFloor(x, y, nx, ny) then
-              comp[j] = cid
-              top = top + 1
-              stack[top] = j
-            end
-          end
-        end
-      end
-      compN[cid] = n
-      compBlocks[cid] = blocks
-      compBox[cid] = {x0 - x0 % BLK, y0 - y0 % BLK, (x1 // BLK + 1) * BLK, (y1 // BLK + 1) * BLK}
-    end
-  end
-end
-
 -- ── 레이어 표 ─────────────────────────────────────────────────────────────
 local PTRTBL = 0x12AF5          -- 뱅크$09 의 $AAF5
 local ptrs, uniq = {}, {}
@@ -235,26 +223,110 @@ local function eachEntry(lid, stride, skipLen, fn)
   end
 end
 
-local marks = {}                -- ["x,y"] = {x, y, 종류}
-local function key(x, y) return x .. "," .. y end
 local function inMap(x, y) return x < MAP_W and y < MAP_H end
 
--- 겹치는 칸의 우선순위는 불러오는 순서로 정한다 (위 설명 참조).
-eachEntry(0x16, 6, false, function(x, y, k)             -- 보물상자 / 대화 (같은 칸은 먼저 나온 것)
+-- ── 이음매 ($18) ──────────────────────────────────────────────────────────
+local SIDE_OF_DIR = {[1] = 3, [2] = 2, [3] = 1, [4] = 0}   -- 게임 방향 $0490 -> 면 번호
+local seams, nseams = {}, 0     -- [(X,Y)*4 + 면] = 도착 칸 번호
+eachEntry(0x18, 7, false, function(x, y, k)
+  local s = SIDE_OF_DIR[rdc(k + 2)]
+  local tx, ty = rdc(k + 3), rdc(k + 4) & 0x3F
+  if s and inMap(x, y) and inMap(tx, ty) and not (tx == 0x38 and ty == 0x0C) then
+    local key = (y * MAP_W + x) * 4 + s
+    if not seams[key] then seams[key] = ty * MAP_W + tx; nseams = nseams + 1 end
+  end
+end)
+
+-- ── 구역 계산 ─────────────────────────────────────────────────────────────
+local comp       = {}   -- [칸번호] = 묶음 번호
+local LX, LY     = {}, {} -- [칸번호] = 게임 속 자리 (이음매를 건너면 롬 좌표에서 옮겨진다)
+local compN      = {}   -- [묶음] = 칸 수
+local compPlace  = {}   -- [묶음] = { {블록번호, 옮긴X, 옮긴Y}, ... }
+local compBox    = {}   -- [묶음] = {x0, y0, x1, y1}  게임 속 자리 기준 상자(x1,y1 은 끝+1)
+local ncomp, conflicts = 0, 0
+
+for i = 0, MAP_W * MAP_H - 1 do comp[i] = -1 end
+for si = 0, MAP_W * MAP_H - 1 do
+  if comp[si] < 0 then
+    local cid = ncomp
+    ncomp = ncomp + 1
+    comp[si] = cid
+    LX[si], LY[si] = si % MAP_W, si // MAP_W
+    local q, qh, qt = {si}, 1, 1              -- 파이썬 쪽과 같은 너비 우선 순서
+    local n = 0
+    local seen, places = {}, {}
+    while qh <= qt do
+      local i = q[qh]
+      qh = qh + 1
+      local x, y = i % MAP_W, i // MAP_W
+      n = n + 1
+      local b, ox, oy = blockOf(x, y), LX[i] - x, LY[i] - y
+      local pk = b .. "," .. ox .. "," .. oy
+      if not seen[pk] then seen[pk] = true; places[#places + 1] = {b, ox, oy} end
+      local c = MAP[i]
+      for s = 0, 3 do
+        local nx, ny = x + DX[s], y + DY[s]
+        if passable(sideOf(c, s)) and nx >= 0 and nx < MAP_W and ny >= 0 and ny < MAP_H then
+          local t = seams[(ny * MAP_W + nx) * 4 + s]
+          local go = true
+          if t then                                   -- 이음매: 들어서는 칸이 바뀐다
+            nx, ny = t % MAP_W, t // MAP_W
+          elseif not passable(sideOf(MAP[ny * MAP_W + nx], OPP[s])) then
+            go = false
+          end
+          if go and sameFloor(x, y, nx, ny) then
+            local j = ny * MAP_W + nx
+            local px, py = LX[i] + DX[s], LY[i] + DY[s]
+            if comp[j] >= 0 then
+              if comp[j] == cid and (LX[j] ~= px or LY[j] ~= py) then conflicts = conflicts + 1 end
+            else
+              comp[j] = cid
+              LX[j], LY[j] = px, py
+              qt = qt + 1
+              q[qt] = j
+            end
+          end
+        end
+      end
+    end
+    local x0, y0, x1, y1 = 1e9, 1e9, -1e9, -1e9
+    for _, p in ipairs(places) do
+      local gx, gy = (p[1] % BCOLS) * BLK + p[2], (p[1] // BCOLS) * BLK + p[3]
+      if gx < x0 then x0 = gx end
+      if gy < y0 then y0 = gy end
+      if gx + BLK > x1 then x1 = gx + BLK end
+      if gy + BLK > y1 then y1 = gy + BLK end
+    end
+    compN[cid] = n
+    compPlace[cid] = places
+    compBox[cid] = {x0, y0, x1, y1}
+  end
+end
+
+local function key(x, y) return x .. "," .. y end
+
+-- 진행 상태 w($07FF bit7 = 0/1)마다 표식을 따로 만든다. 겹치는 칸의 우선순위는 불러오는 순서로 정한다 (위 설명 참조).
+local function buildMarks(w)
+local marks = {}                -- ["x,y"] = {x, y, 종류}
+eachEntry(0x16, 6, false, function(x, y, k)             -- 보물상자 / 대화 칸 (같은 칸은 먼저 나온 것)
+  local cond = rdc(k + 1) & 0xC0                         -- 0x40 = w 가 0 일 때만, 0x80 = w 가 1 일 때만 ($E2E9)
+  if cond ~= 0 and ((cond & 0x40 ~= 0 and w ~= 0) or (cond & 0x40 == 0 and w ~= 1)) then return end
   if inMap(x, y) and not marks[key(x, y)] then
-    marks[key(x, y)] = {x, y, rdc(k + 2) == 32 and KIND_CHEST or KIND_NPC}
+    marks[key(x, y)] = {x, y, L16_KIND[rdc(k + 2)] or KIND_NPC}
   end
 end)
 eachEntry(0x10, 4, true, function(x, y)                 -- 엘리베이터
   if inMap(x, y) then marks[key(x, y)] = {x, y, KIND_ELEV} end
 end)
-eachEntry(0x0A, 5, false, function(x, y, k)             -- 내려가는 계단 -> 도착지는 올라가는 계단
-  local tx, ty = rdc(k + 2), rdc(k + 3)
+eachEntry(0x0A, 5, false, function(x, y)                -- 내려가는 계단 = $0A 출발 칸
   if inMap(x, y) then marks[key(x, y)] = {x, y, KIND_DOWN} end
-  if inMap(tx, ty) then
-    local m = marks[key(tx, ty)]
-    if not (m and m[3] == KIND_DOWN) then marks[key(tx, ty)] = {tx, ty, KIND_UP} end
-  end
+end)
+eachEntry(0x08, 5, false, function(x, y)                -- 올라가는 계단 = $08 출발 칸
+  local m = marks[key(x, y)]
+  if inMap(x, y) and not (m and m[3] == KIND_DOWN) then marks[key(x, y)] = {x, y, KIND_UP} end
+end)
+eachEntry(0x14, 3, false, function(x, y)                -- 고정 전투 (빈 칸에만, 텔레포트보다 먼저)
+  if inMap(x, y) and not marks[key(x, y)] then marks[key(x, y)] = {x, y, KIND_FIGHT} end
 end)
 eachEntry(0x0E, 6, false, function(x, y)                -- 텔레포트 칸 (빈 칸에만)
   if inMap(x, y) and not marks[key(x, y)] then marks[key(x, y)] = {x, y, KIND_WARP} end
@@ -263,24 +335,39 @@ eachEntry(0x0E, 6, false, function(x, y, k)             -- 텔레포트 도착 �
   local tx, ty = rdc(k + 2), rdc(k + 3) & 0x3F
   if inMap(tx, ty) and not marks[key(tx, ty)] then marks[key(tx, ty)] = {tx, ty, KIND_WARPTO} end
 end)
-eachEntry(0x14, 3, false, function(x, y)                -- 고정 전투는 빈 칸에만
-  if inMap(x, y) and not marks[key(x, y)] then marks[key(x, y)] = {x, y, KIND_FIGHT} end
-end)
+
+-- 블록별로 모아 둔다 (구역은 블록 단위로 옮겨 그리므로)
+local marksByBlock = {}
+for _, m in pairs(marks) do
+  local b = blockOf(m[1], m[2])
+  marksByBlock[b] = marksByBlock[b] or {}
+  table.insert(marksByBlock[b], m)
+end
+return marks, marksByBlock
+end
+
+local marksW, marksByBlockW = {}, {}
+marksW[0], marksByBlockW[0] = buildMarks(0)
+marksW[1], marksByBlockW[1] = buildMarks(1)
+local marks = marksW[0]          -- 세는 것은 처음 상태(w=0) 기준 (mt1_ds_window.py EXPECT 와 같다)
 
 -- ★세는 것은 완성된 표를 훑어서 한다(같은 칸이 두 번 나오는 자리에서 어긋나지 않게).
 local count = {}
-for k = KIND_UP, KIND_WARPTO do count[k] = 0 end
+for k = 1, KIND_LAST do count[k] = 0 end
 for _, m in pairs(marks) do count[m[3]] = count[m[3]] + 1 end
 local nbig = 0
 for cid = 0, ncomp - 1 do
   if compN[cid] >= 4 then nbig = nbig + 1 end
 end
 
--- 헤드리스 검증이 계산 결과를 읽어 파이썬 분석과 맞춰 보는 자리
-AUTOMAP_INFO = { comps = ncomp, bigComps = nbig, up = count[KIND_UP], down = count[KIND_DOWN],
-                 elev = count[KIND_ELEV], chest = count[KIND_CHEST], npc = count[KIND_NPC],
-                 fight = count[KIND_FIGHT], warp = count[KIND_WARP], warpTo = count[KIND_WARPTO],
-                 floorTable = floorTbl and 1 or 0 }
+-- 헤드리스 검증이 계산 결과를 읽어 파이썬 분석(mt1_ds_window.py --check)과 맞춰 보는 자리
+AUTOMAP_INFO = { comps = ncomp, bigComps = nbig, seams = nseams, conflicts = conflicts,
+                 up = count[KIND_UP], down = count[KIND_DOWN], elev = count[KIND_ELEV],
+                 chest = count[KIND_CHEST], amethyst = count[KIND_AMETHYST], info = count[KIND_INFO],
+                 shop = count[KIND_SHOP], spring = count[KIND_SPRING], statue = count[KIND_STATUE],
+                 jakyou = count[KIND_JAKYOU],
+                 npc = count[KIND_NPC], fight = count[KIND_FIGHT], warp = count[KIND_WARP],
+                 warpTo = count[KIND_WARPTO], floorTable = floorTbl and 1 or 0 }
 
 -- ── 그리기 ────────────────────────────────────────────────────────────────
 local function s8(v) if v >= 128 then return v - 256 end return v end
@@ -297,6 +384,27 @@ local function mark(X, Y, cell, kind)
   elseif shape == "dot" then
     local c = cell // 2
     emu.drawRectangle(X + c - 1, Y + c - 1, 3, 3, col, true, 1)
+  elseif shape == "coin" then                          -- 계단(꽉 찬 네모)보다 작은 꽉 찬 네모
+    local t = math.max(2, s - 2)
+    local o = (cell - t) // 2
+    emu.drawRectangle(X + o, Y + o, t, t, col, true, 1)
+  elseif shape == "plus" then
+    local c = cell // 2
+    emu.drawLine(X + c, Y + 1, X + c, Y + cell - 1, col, 1)
+    emu.drawLine(X + 1, Y + c, X + cell - 1, Y + c, col, 1)
+  elseif shape == "tri" then
+    local c = cell // 2
+    for d = 0, cell - 2 do                             -- 위가 뾰족한 삼각형을 가로줄로 채운다
+      local half = (d * c) // math.max(1, cell - 2)
+      emu.drawLine(X + c - half, Y + 1 + d, X + c + half, Y + 1 + d, col, 1)
+    end
+  elseif shape == "house" then                         -- 지붕(위 절반 삼각형) + 몸통(아래 네모)
+    local c = cell // 2
+    for d = 0, c - 1 do
+      local half = (d * c) // math.max(1, c)
+      emu.drawLine(X + c - half, Y + 1 + d, X + c + half, Y + 1 + d, col, 1)
+    end
+    emu.drawRectangle(X + 1, Y + c, s, cell - c - 1, col, true, 1)
   elseif shape == "diamond" or shape == "odiamond" then
     local c = cell // 2
     local r = math.max(1, c - 1)
@@ -340,8 +448,9 @@ local function draw()
   local dx = s8(emu.read(ADDR_DX, RAM))
   local dy = s8(emu.read(ADDR_DY, RAM))
 
-  local cid = comp[py * MAP_W + px]
-  local box, blocks = compBox[cid], compBlocks[cid]
+  local pi = py * MAP_W + px
+  local cid = comp[pi]
+  local box, places = compBox[cid], compPlace[cid]
   local bx0, by0 = box[1], box[2]
   local w, h = box[3] - bx0, box[4] - by0
 
@@ -355,12 +464,13 @@ local function draw()
   emu.drawRectangle(ox - 2, oy - 2, bw + 4, bh + 4, C_BACK, true, 1)
   emu.drawRectangle(ox - 2, oy - 2, bw + 4, bh + 4, C_EDGE, false, 1)
 
-  for y = by0, box[4] - 1 do
-    for x = bx0, box[3] - 1 do
-      -- 불규칙한 구역이면 상자 안이라도 구역에 안 속한 블록은 비워 둔다
-      if blocks[blockOf(x, y)] then
+  -- 구획(8x8 블록)마다 게임 속 자리로 옮겨 그린다. 상자 안이라도 구역에 안 속한 자리는 비워 둔다.
+  for _, p in ipairs(places) do
+    local rx, ry = (p[1] % BCOLS) * BLK, (p[1] // BCOLS) * BLK
+    for y = ry, ry + BLK - 1 do
+      for x = rx, rx + BLK - 1 do
         local c = MAP[y * MAP_W + x]
-        local X, Y = ox + (x - bx0) * cell, oy + (y - by0) * cell
+        local X, Y = ox + (x + p[2] - bx0) * cell, oy + (y + p[3] - by0) * cell
         local n, e, s, wv = sideOf(c, 3), sideOf(c, 2), sideOf(c, 1), sideOf(c, 0)
         if n ~= 0 then emu.drawLine(X, Y, X + cell, Y, n == 1 and C_WALL or C_DOOR, 1) end
         if wv ~= 0 then emu.drawLine(X, Y, X, Y + cell, wv == 1 and C_WALL or C_DOOR, 1) end
@@ -371,15 +481,15 @@ local function draw()
   end
 
   if showMarks then
-    for _, m in pairs(marks) do
-      local mx, my = m[1], m[2]
-      if mx >= bx0 and mx < box[3] and my >= by0 and my < box[4] and blocks[blockOf(mx, my)] then
-        mark(ox + (mx - bx0) * cell, oy + (my - by0) * cell, cell, m[3])
+    local mbb = marksByBlockW[(emu.read(0x07FF, RAM) >= 0x80) and 1 or 0]   -- 지금 진행 상태의 표식만
+    for _, p in ipairs(places) do
+      for _, m in ipairs(mbb[p[1]] or {}) do
+        mark(ox + (m[1] + p[2] - bx0) * cell, oy + (m[2] + p[3] - by0) * cell, cell, m[3])
       end
     end
   end
 
-  local mx, my = ox + (px - bx0) * cell, oy + (py - by0) * cell
+  local mx, my = ox + (LX[pi] - bx0) * cell, oy + (LY[pi] - by0) * cell
   emu.drawRectangle(mx + 1, my + 1, cell - 1, cell - 1, C_ME, true, 1)
   arrow(mx + cell // 2, my + cell // 2, dx, dy, math.max(2, cell // 2), C_ME)
 end
@@ -404,6 +514,6 @@ emu.addEventCallback(function()
 end, emu.eventType.endFrame)
 
 emu.displayMessage("automap", string.format(
-  "자동지도 ON  계단↑%d ↓%d  엘베%d  상자%d  NPC%d  전투%d  텔포%d  (M끄기 N위치 V표식)",
+  "자동지도 ON  계단↑%d ↓%d  엘베%d  상자%d  INFO%d  전투%d  텔포%d  이음매%d  (M끄기 N위치 V표식)",
   count[KIND_UP], count[KIND_DOWN], count[KIND_ELEV],
-  count[KIND_CHEST], count[KIND_NPC], count[KIND_FIGHT], count[KIND_WARP]))
+  count[KIND_CHEST], count[KIND_INFO], count[KIND_FIGHT], count[KIND_WARP], nseams))

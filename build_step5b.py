@@ -139,8 +139,12 @@ GFX_CLASH = [0xB4, 0xB5, 0xBE, 0xBF] + list(range(0xC1, 0xD0))
 #   돈 기호만큼은 풀에서 **아예 뺀다.** 이름 슬롯이 1칸 줄지만 압박시험 최악(40)보다 여유가 있다.
 _POOL = (list(range(0x80, 0x9A)) + list(range(0xB4, 0xBD)) + [0xBE, 0xBF]
          + [c for c in range(0xC1, 0xD0) if c != 0xCD] + (FREED if M195 else []))
+# ★2026-10-04 그림 칸 안에서도 순서가 있다: 넘칠 때 앞에서부터 쓰인다. 가장 무거운 사람 상태창(나카지마, 아이템 9줄)이
+#   새 글자 28칸 = 그림 칸 3칸을 넘친다. 그 화면에 **안 보이는** $B4 $B5 $C6 $C7 을 앞으로 (실측: $BE 가 셋째라 ※※ 가 깨졌었다).
+_GFX_FIRST = [0xB4, 0xB5, 0xC6, 0xC7]
 TILES = ([c for c in _POOL if c not in GFX_CLASH]
-         + [c for c in _POOL if c in GFX_CLASH])
+         + [c for c in _GFX_FIRST if c in _POOL]
+         + [c for c in _POOL if c in GFX_CLASH and c not in _GFX_FIRST])
 _TILESET = set(TILES)
 NSLOT = len(TILES)                # 52 (191) / 84 (195) = 한 화면 동시 표시 가능한 서로 다른 글자 수
 # 롬 인코딩용 로컬 인덱스 코드. **이 값은 우리 훅만 읽는 중간 코드**라
@@ -210,6 +214,11 @@ NHOOK = 0x6900                   # 이름 훅 (악마/아이템/마법 이름표
 #   실측(적대적 조합): 대사 한 메시지 최대 25, 악마8+아이템8 최대 53 -> 이름 여유 12칸.
 NDLG = 28 if M195 else 24
 NNSLOT = NSLOT - NDLG
+# ★2026-10-04 그림 칸은 TILES 맨 뒤 NGFX 칸 = 이름 풀의 맨 뒤. 평소엔 그 앞 NSOFT 칸만 돈다.
+NGFX = sum(1 for _c in TILES if _c in GFX_CLASH)
+assert all(_c in GFX_CLASH for _c in TILES[NSLOT - NGFX:]), "그림 칸이 풀 맨 뒤에 모여 있지 않다"
+NSOFT = NNSLOT - NGFX
+assert NSOFT >= 20, "그림 칸을 뺀 이름 풀 %d칸이 너무 작다" % NSOFT
 # 글리프 버퍼가 $7500 으로 빠지면서 $6400~$67FF 가 비었다 - 이름 상주표를 그리로 옮긴다
 # (부팅 복사 범위 안이라 0 으로 초기화된다)
 NRESL, NRESH = 0x6400, 0x6480   # 이름 전용 상주표 (NNSLOT 바이트씩)
@@ -225,6 +234,27 @@ MODE_CAP   = [8, 8, 0, 6, 0]                  # 0 = 무제한
 MODE_FILL  = [0, 8, 0, 6, 0]                  # $FF 로 채울 칸수, 0 = 안 함
 MODE_BASEH = [0x80, 0x80, 0x80, 0x88, 0x86]   # 진입표 상위바이트 (A/A/A/C/B)
 SETCNT = 0x6B00                 # CNT = max(NEXT, NDLG+NCNT) 공용 서브루틴
+# ★★2026-10-04 이름 풀 감기 규칙 + 그림 칸 보호 + 업로드 굶주림 (사용자 「조사한 버그 고쳐보자」)
+#   ① 상태창·사교의 관이 오래 플레이하면 깨졌다: 이름 풀이 NNSLOT 칸을 **순서대로 돌기만** 해서
+#      맨 뒤 그림 칸($B4 $B5 $BE $BF $C1~$CF)이 결국 한글로 덮이고, 다시는 그림으로 안 돌아왔다.
+#      -> 평소엔 앞 NSOFT 칸만 돈다. 한 「묶음」(할당 사이가 NGAP 프레임 안쪽인 연속 할당 = 한 화면을 그리는 중)이
+#         NSOFT 칸을 다 쓰면 그때만 그림 칸으로 넘친다. 넘쳤던 그림 칸은 다음 묶음이 시작될 때 원래 그림으로 되돌린다.
+#   ② 블록 업로더로 그리는 글자(사교의 관 CLASS 칸 등)가 **대사 풀**에서 칸을 받아,
+#      새 대사 창이 열리며 NEXT=0 이 되면 화면에 떠 있던 CLASS 글자가 덮였다 -> 블록 쪽은 이름 풀(RESN)로.
+#   ③ 「く마이라」: 할당할 때마다 SETCNT 가 업로드 순번 SLOT 을 0 으로 되감고, 글자 한 칸짜리 블록이
+#      매 프레임 대기 중이면 업로더가 아예 쉬어서 번호가 높은 칸(38)이 끝내 안 올라갔다.
+#      -> 이름 풀은 SETCNTN(되감지 않고 새 칸이 더 앞이면 거기로만 당김) + 작은 블록 대기 중에도 한 칸은 올린다(CHKBLK).
+EXTRA = 0x6C00                  # 새 루틴 페이지 ($6C00~$6CFF, 옛 UI 훅 자리라 비어 있다)
+RESN = EXTRA                    # 점프표 (주소 고정)
+NWRAP = 0x67A0                  # 함정 창 훅($6710, 137바이트) 뒤 ~ UI 변수($67F0) 앞 빈자리 (앞부분만, 뒷부분은 $6C00 페이지)
+SETCNTN = 0x6B70                # NBUF($6B60, 16바이트) 뒤 ~ 모드표($6BD0) 앞 빈자리
+EXTRA2 = 0x62A0                 # 메시지 훅($6100, 409바이트) 뒤 ~ RESIDL($6300) 앞 빈자리
+RESTORE = EXTRA2
+CHKBLK = EXTRA + 3              # $6C00 점프표 둘째 칸
+NLAST, NBURST, GFXDIRTY, RESTREQ, NLO, PENDHI, UPN = 0x62F0, 0x62F1, 0x62F2, 0x62F3, 0x62F4, 0x62F5, 0x62F6
+UPLOAD_PER_FRAME = 1           # NMI 한 번에 올리는 글리프 수 (2 는 vblank 초과 - 위 CHKBLK 주석)
+NGAP = 24                       # 이보다 오래 할당이 없으면 새 묶음(새 화면)으로 본다. 프레임 = $0C(NMI 대기 횟수)
+GFXDATA = 0x9E00                # 그림 칸 원래 그래픽 사본: 뱅크$10 의 $1E00 (이름 훅 안에서는 R6 = 뱅크$10)
 #   PRG-RAM 배치: $6000 업로더 / $6080 SLOTTAB / $6070 TBL7 / $60F0 변수 (NSLOT=84 기준)
 #   $6100 메시지훅 / $6300 RESIDL / $6340 RESIDH / $6380 MAP / $6400 글리프버퍼(800)
 #   $6800 TEXT / $6900 이름훅 / $6AD0 SETCNT / $6B00 SETCNT / $6B20 이름상주표 / $6B60 NBUF / $6BF0 변수
@@ -435,6 +465,20 @@ GID = {c: i for i, c in enumerate(glob)}
 print("전역 음절 %d종 (상한 %d)" % (len(glob), MAXSYL))
 
 # ---------------------------------------------------------------- 메시지별 인코딩
+# ★2026-10-04 엔딩 얼굴 장면(이자나미·이자나기) 대사 5개. 이 장면은 아래쪽(대사창·풍경)을 타일셋32 = CHR 뱅크 28~31
+#   (가나 글꼴 + 풍경)로 그려서 정적 글꼴(CHR-RAM)도 동적 슬롯도 안 보인다 -> 가나·한자 자리가 그대로 떴다.
+#   -> 그 넷을 복사한 전용 뱅크(END_BANK~+3)를 만들고, 풍경이 안 쓰는 코드 자리에 필요한 음절을 굽는다.
+#      이 다섯 메시지는 **모든 음절을 그 코드로 직접** 인코딩한다(동적 슬롯 0칸, 정적 코드도 안 씀).
+#   풍경이 쓰는 코드는 엔딩 장면 420프레임의 네임테이블을 떠서 확인했다(아래쪽 14~29행, 대사창 안 제외).
+ENDING_MSGS = (0x8D44, 0x8D83, 0x8DBD, 0x8DC8, 0x8DD2)
+END_CODES = (list(range(0x64, 0x80))
+             + [0x24, 0x25, 0x26, 0x28, 0x2A, 0x2E, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3E,
+                0x43, 0x47, 0x48, 0x4B, 0x4C, 0x4D]
+             + [0x9B, 0x9C, 0x9F, 0xA2, 0xAA, 0xAB, 0xAC, 0xAD, 0xB1, 0xB2, 0xB3])
+END_MAP = {}
+END_BANK = 0x84                  # CHR 1KB 뱅크 $84~$87 (매퍼195 확장분, $80~$83 다음 빈자리)
+TS_END, TS_NEW = 33, 31          # $0D/$0E 값: 엔딩 아래쪽(33) -> 한글 뱅크로 돌린 안 쓰는 타일셋(31)
+ENDCHK = 0x6B20                  # SETCNT($6B00) 뒤 ~ NBUF($6B60) 앞 빈자리
 records, skipped = [], []
 for a, ko in entries:
     if a in shared:
@@ -457,6 +501,11 @@ for a, ko in entries:
                 if "A" <= ch <= "Z":                    # 라틴은 $9A~$B3 에 그대로 산다
                     enc.append(0x9A + ord(ch) - ord("A")); continue
                 if ch in PUNCT: enc.append(PUNCT[ch]); continue
+                if a in ENDING_MSGS:
+                    if ch not in END_MAP:
+                        assert len(END_MAP) < len(END_CODES), "엔딩 음절이 빈 코드 %d개를 넘는다" % len(END_CODES)
+                        END_MAP[ch] = END_CODES[len(END_MAP)]
+                    enc.append(END_MAP[ch]); continue
                 if ch in STATIC: enc.append(STATIC[ch]); continue
                 if ch not in local: local.append(ch)
                 enc.append(TILE0 + local.index(ch))
@@ -479,7 +528,7 @@ for a, ko in entries:
         else:
             _drawn.add(_j); _j += 1
     clash = sorted({enc[i] for i in (_drawn & litpos) if enc[i] in _TILESET})
-    if clash:
+    if clash and a not in ENDING_MSGS:
         skipped.append((a, "태그 %s 가 슬롯 타일과 충돌 - 번역문에서 없애야 한다"
                         % " ".join("<%02X>" % b for b in clash)))
         continue
@@ -790,7 +839,35 @@ for _line in (open(UI_FILE, encoding="utf-8") if UI_HOOK else []):
     _a, _n, _k = _line.split(chr(9))
     uient.append((int(_a, 16), int(_n), _k))
 uisyl = []                                   # 이스케이프가 필요한 음절 (id 순)
+# ★★2026-10-04 id $5C(92)·$BD(189) 는 블록 화면에서 쓰지 않는 음절에게 미리 준다.
+#   사교의 관 상성표는 원래 ✕ 타일($BD = 우리 이스케이프 표식)을 「※※－※※※」처럼 이어 쓴다. UI 음절이 224종까지 늘면서
+#   $BD 뒤의 $BD(189)·$5C(92)가 「있는 음절 번호」가 되어 블록 훅이 한글로 바꿨다(앙·걸·궃).
+#   -> 그 두 번호는 함정 창(「밀렸다」)·가이아 흥정(「에 어때」)처럼 블록 업로더를 안 거치는 음절에게 주고,
+#      블록 훅은 $BD 뒤가 $5C/$BD 면 진짜 ✕ 로 둔다.
+UI_RESERVED = {0x5C: "밀", 0xBD: "때"}
+def _uid(ch):
+    if ch in uisyl: return uisyl.index(ch)
+    for _k, _v in UI_RESERVED.items():
+        if _v == ch:
+            while len(uisyl) <= _k: uisyl.append(None)
+            assert uisyl[_k] is None
+            uisyl[_k] = ch; return _k
+    _i = 0
+    while _i < len(uisyl) and (uisyl[_i] is not None or _i in UI_RESERVED): _i += 1
+    while _i in UI_RESERVED: _i += 1
+    if _i >= len(uisyl):
+        while len(uisyl) < _i: uisyl.append(None)
+        uisyl.append(ch)
+    else:
+        uisyl[_i] = ch
+    return _i
 uilong = []
+# ★2026-10-05 원문 문장은 거의 다 「。」($62)로 끝나고, 그 「。」는 ui_ko 항목 **바로 뒤** 바이트다.
+#   번역이 원문보다 짧으면 빈칸 패딩 너머로 떨어져 「도망쳤다  。」처럼 보였다(사용자 보고, 도망 문구).
+#   -> 그 자리가 원판 「。」이고 다른 항목이 덮는 자리가 아니면 「。」를 번역문 바로 뒤로 당기고 옛 자리는 빈칸.
+#      번역이 「!」「?」로 끝나면 「。」를 붙이지 않고 지운다(「악마의 기습!。」 방지).
+_uicover = {_o for _a, _n2, _k2 in uient for _o in range(_a, _a + _n2)}
+DOTFIX = []
 for _off, _n, _ko in uient:
     enc = []
     for k, v in tokenize(_ko):
@@ -807,8 +884,7 @@ for _off, _n, _ko in uient:
             if ch in PUNCT: enc.append(PUNCT[ch]); continue
             if ch in STATIC: enc.append(STATIC[ch]); continue
             assert G.has_glyph(ch), "UI $%05X: 폰트에 없는 글자 %s" % (_off, ch)
-            if ch not in uisyl: uisyl.append(ch)
-            enc.extend([ESC, uisyl.index(ch)])
+            enc.extend([ESC, _uid(ch)])
     # ★종결자는 **맨 끝 한 바이트만** 허용한다.
     #   중간에 있으면 훅이 거기서 멈춰 뒤쪽 이스케이프가 안 풀린다.
     #   끝에 있는 것은 정상 - `ナカジマたち`(7바이트) 자리에 `나카지마<FF>`(5바이트)를 넣으면
@@ -817,12 +893,25 @@ for _off, _n, _ko in uient:
     if len(enc) > _n:
         uilong.append((_off, _n, len(enc), _ko)); continue
     assert ESC not in enc[1::2] or True
+    _dot = _off + _n
+    _textend = enc and ((len(enc) >= 2 and enc[-2] == ESC) or (enc[-1] < 0xD0 and enc[-1] != BLANK))
+    _span = _n
+    if len(enc) < _n and _textend and rom[_dot] == 0x62 and _dot not in _uicover:
+        if enc[-1] in (PUNCT["!"], PUNCT["?"]) and not (len(enc) >= 2 and enc[-2] == ESC):
+            DOTFIX.append((_off, "지움", _ko))
+        else:
+            enc = enc + [0x62]
+            DOTFIX.append((_off, "당김", _ko))
+        rom[_dot] = BLANK
+        _span = _n + 1
     rom[_off:_off + _n] = bytes(enc) + bytes([BLANK] * (_n - len(enc)))
-    INPLACE.append((_off, _n, "UI", _ko))
+    INPLACE.append((_off, _span, "UI", _ko))
 if uilong:
     print("★UI 길이 초과 %d개:" % len(uilong))
     for _o, _n, _l, _k in uilong[:6]: print("   $%05X %d>%d  %s" % (_o, _l, _n, _k))
     sys.exit(1)
+print("UI 문장 끝 「。」 치환: 당김 %d / 지움 %d" % (sum(1 for d in DOTFIX if d[1] == "당김"),
+                                           sum(1 for d in DOTFIX if d[1] == "지움")))
 # ---------------------------------------------------------------- ① 보스 칭호 (오프셋표)
 # ★2026-09-07 정적 전수조사로 발견. 고정뱅크 $DA01~$DA3A(58바이트)에 6개가 <FE> 로 이어져 있고
 #   **$D9FB 에 오프셋표 6바이트**가 따로 있다. 읽는 코드는 $DA49:
@@ -843,8 +932,7 @@ def _enc_ko(text):
         if ch in PUNCT: e.append(PUNCT[ch]); continue
         if ch in STATIC: e.append(STATIC[ch]); continue
         assert G.has_glyph(ch), "보스 칭호: 폰트에 없는 글자 %s" % ch
-        if ch not in uisyl: uisyl.append(ch)
-        e.extend([ESC, uisyl.index(ch)])
+        e.extend([ESC, _uid(ch)])
     return e
 
 
@@ -865,6 +953,7 @@ print("보스 칭호 6개 한글화 (%d/%d바이트, 오프셋표 %s)"
       % (len(_bb), BOSS_CAP, " ".join("%02X" % x for x in _boff)))
 
 assert len(uisyl) <= UIMAX, "UI 음절 %d종 > 상한 %d" % (len(uisyl), UIMAX)
+assert None not in uisyl, "UI 음절 표에 빈 번호가 남았다(예약 음절이 안 쓰였다): %s" % [i for i, c in enumerate(uisyl) if c is None]
 # UI 음절에 **연속된** 전역 id 를 준다 (이미 있어도 새로 붙인다 - 연속성이 우선)
 UIBASE = len(glob)
 uiglyph = []
@@ -971,6 +1060,13 @@ if PANEL:
     _lock = set()
     for _i, _e in enumerate(_ent):
         if _i not in _pan: _lock |= {c for c in _e if c != 0xFF}
+    # ★2026-10-05 소환 화면 오른쪽 위 「もちきん / ¥금액」 상자(사용자 보고 「소환할 때 소지금이 미번역」).
+    #   뱅크5 $BB79 가 $BBFC 20바이트(머리 8 + 6x2칸)를 블록으로 올리고, $BBAD `LDA #$5F` 로 돈 기호를 찍은 뒤 금액($0550/1)을 붙인다.
+    #   같은 미니폰트인데 패널 표 밖이라 잠금에서 빠져, もちきん·돈 기호 다섯 칸이 다른 패널 음절로 덮여 「방능렙환 / 회17185」로 떴다.
+    #   -> 돈 기호 $5F 는 잠그고, 첫 줄 넉 칸을 「소지금」으로 굽는다.
+    MONEYBOX, MONEY_KO = bk(0x05, 0x1C04), "소지금"
+    assert bytes(rom[MONEYBOX:MONEYBOX + 4]) == bytes([0x52, 0x4C, 0x48, 0x5E]), "소환 화면 소지금 상자가 예상과 다르다"
+    _lock.add(0x5F)
     # 미니폰트 글자 영역. $1C(작은 M)와 $65~$7F(미로 패턴)는 처음부터 제외한다.
     _pool = [c for c in (list(range(0x3D, 0x40)) + list(range(0x40, 0x65))) if c not in _lock]
     # ★★2026-09-13 예/아니오 상자(블록 A·C)는 **두 폰트 페이지 세트에서 똑같이** 보여야 한다.
@@ -989,6 +1085,8 @@ if PANEL:
     for _i in sorted(_pan):
         for _ch in _pan[_i]:
             if _ch not in _syl: _syl.append(_ch)
+    for _ch in MONEY_KO:
+        if _ch not in _syl: _syl.append(_ch)
     assert len(_syl) <= len(_pool), "패널 음절 %d종 > 빈 칸 %d개" % (len(_syl), len(_pool))
     _pcode = {_ch: _pool[_k] for _k, _ch in enumerate(_syl)}
     assert [_pcode[c] for c in PROMPT_YES + PROMPT_NO] == [0x3D, 0x3E, 0x3F], \
@@ -1009,7 +1107,9 @@ if PANEL:
         assert len(_enc) <= PANW, "패널 idx%d '%s' %d칸 > %d칸" % (_i, _ko, len(_enc), PANW)
         rom[PANTAB + _i * PANW:PANTAB + (_i + 1) * PANW] = _enc + bytes([0xFF] * (PANW - len(_enc)))
         INPLACE.append((PANTAB + _i * PANW, PANW, "패널", _ko))
-    print("던전 패널/전투 박스 %d개 한글화 (음절 %d종 / 빈 칸 %d개, 잠근 타일 %d개)"
+    rom[MONEYBOX:MONEYBOX + 4] = bytes(_pcode[_ch] for _ch in MONEY_KO) + bytes([0xFF] * (4 - len(MONEY_KO)))
+    INPLACE.append((MONEYBOX, 4, "패널", MONEY_KO))
+    print("던전 패널/전투 박스 %d개 + 소환 화면 소지금 한글화 (음절 %d종 / 빈 칸 %d개, 잠근 타일 %d개)"
           % (len(_pan), len(_syl), len(_pool), len(_lock)))
 else:
     print("던전 패널 꺼짐")
@@ -1102,6 +1202,13 @@ else:
 for _a, _e, _ in records:
     assert ESC not in _e, "@%04X 인코딩에 $BD 가 들어 있다 (UI 이스케이프 표식과 충돌)" % _a
 
+# ★2026-10-04 그림 칸 원래 그래픽 사본 -> 뱅크$10 의 $1E00 (이름 훅 안에서 CPU $9E00 으로 보인다)
+#   필드·상태창 타일셋에서 코드 $80~$BF = CHR 뱅크6, $C0~$FF = CHR 뱅크7 (새로 켠 게임의 CHR-RAM 과 대조해 확인).
+_chr0g = HDR + rom[4] * 16384
+_gfx = b"".join(bytes(rom[_chr0g + (6 if _c < 0xC0 else 7) * 1024 + (_c & 0x3F) * 16:][:16])
+                for _c in TILES[NSLOT - NGFX:])
+assert len(look) <= 0x0E00 and not any(recs[LOOKBANK][0x1E00:0x1E00 + len(_gfx)]), "뱅크$10 $1E00 자리가 비어 있지 않다"
+recs[LOOKBANK][0x1E00:0x1E00 + len(_gfx)] = _gfx
 for b in RECBANKS:
     rom[bk(b, 0):bk(b, 0) + 0x2000] = bytes(recs[b])
 LOOKEND = 0x91 + (len(look) >> 8)   # 룩업 스캔이 넘어서면 안 되는 상위바이트
@@ -1115,9 +1222,12 @@ rom[fx(0xC967)] = RECBANKS[0]
 
 # ---------------------------------------------------------------- NMI 업로더 (4a)
 c = Asm(0x6000)
-c.zp(0xA5, 0x0B); c.imm(0x29, 0x01); c.rel(0xD0, "skip")
+c.ab(0x20, CHKBLK); c.rel(0xD0, "skip")         # ★2026-10-04 블록 대기 중이어도 한 칸짜리 블록이면 올린다
 c.ab(0xAD, CNT); c.rel(0xF0, "skip")             # 올릴 게 없으면 끝
 # ★목적지 타일은 **변환표**에서 얻는다 (슬롯 번호 != 타일 번호. $C0 을 건너뛰므로 불연속)
+# ★2026-10-04 한 프레임에 UPN 칸(블록 대기 없으면 2, 작은 블록 대기면 1) 올린다. CHUNK=16 이라 CHK 단계는 없앴다.
+assert CHUNK == 16
+c.L("again")
 c.ab(0xAE, SLOT); c.ab(0xBD, SLOTTAB); c.ab(0x8D, TMP)    # TMP = 타일 번호
 c.raw(0x4A, 0x4A, 0x4A, 0x4A)
 c.raw(0x18); c.imm(0x69, 0x10); c.ab(0x8D, 0x2006)        # 목적지 상위 = $10 + (타일>>4)
@@ -1129,15 +1239,17 @@ c.ab(0xAD, TMP); c.imm(0x29, 0x0F); c.raw(0x0A, 0x0A, 0x0A, 0x0A)
 c.ab(0x8D, 0x2006); c.imm(0xA0, CHUNK)                    # 목적지 하위 = (타일&$0F)*16
 c.L("ldsrc")
 c.ab(0xBD, SRCBASE); c.ab(0x8D, 0x2007); c.raw(0xE8, 0x88); c.rel(0xD0, "ldsrc")
-c.ab(0xEE, CHK); c.ab(0xAD, CHK); c.imm(0xC9, 16 // CHUNK); c.rel(0xD0, "skip")
-c.imm(0xA9, 0x00); c.ab(0x8D, CHK)
-c.ab(0xEE, SLOT); c.ab(0xAD, SLOT); c.ab(0xCD, CNT); c.rel(0xD0, "skip")
+c.ab(0xEE, SLOT); c.ab(0xAD, SLOT); c.ab(0xCD, CNT); c.rel(0xD0, "nx")
 c.imm(0xA9, 0x00); c.ab(0x8D, SLOT)              # 순환 (자가복구)
+c.ab(0x8D, PENDHI)                               # ★2026-10-04 한 바퀴 다 올렸다 = 밀린 칸 없음
+c.L("nx")
+c.ab(0xCE, UPN); c.rel(0xD0, "again")
 c.L("skip")
 c.ab(0x20, 0xC3DF); c.raw(0x60)
 up = c.build()
 LDSRC = c.lab["ldsrc"]
 assert len(up) <= SLOT - 0x6000
+assert len(up) <= TBL7 - 0x6000, "업로더 %d바이트가 TBL7($%04X)을 덮는다" % (len(up), TBL7)
 
 # ---------------------------------------------------------------- 메시지 시작 훅
 # 룩업표는 4바이트/엔트리이고 X 가 8비트라 한 페이지에 64개까지다.
@@ -1150,6 +1262,7 @@ h = Asm(HOOK)
 #        (c) $BE/$BF 를 그 복사본으로 돌린다. 엔진의 ($BE),Y 가 그대로 동작한다.
 # 전부 메인 스레드라 사이클 제약이 없다.
 h.imm(0xA9, 0x00); h.ab(0x8D, 0x0658)            # 원래 동작
+h.ab(0x20, ENDCHK)                               # ★2026-10-04 엔딩 대사면 아래쪽 타일셋을 한글 뱅크로
 
 # --- 새 창 판정 -> 슬롯 반납 ($C0~$CF 16칸뿐이라 한 화면치만 담으면 된다)
 # $0651 = 이 메시지가 쓰기 시작할 창의 행. 같은 창에 이어 붙으면 행이 **커지고**,
@@ -1325,6 +1438,9 @@ for _ in range(3):
 nh.ab(0xAE, NMODE); nh.zp(0xA5, 0x13); nh.raw(0x18)
 nh.ab(0x7D, NBASEH); nh.zp(0x85, 0x13)      # 표 베이스는 모드마다 다르다
 nh.imm(0xA2, BSET); nh.ab(0x20, 0xC864)           # 뱅크셋13 -> R6 = 이름 진입표 뱅크($8000)
+# ★2026-10-04 그림 칸 되돌리기 요청이 있으면 여기서 한다(R6 = 뱅크$10 이라 원래 그림 사본을 읽을 수 있는 자리).
+nh.ab(0xAD, RESTREQ); nh.rel(0xF0, "nrq"); nh.ab(0x20, RESTORE)
+nh.L("nrq")
 # --- 엔트리 8바이트. ★$12/$13 을 덮기 전에 필요한 값을 전부 꺼내야 한다.
 nh.imm(0xA0, 0x06); nh.zp(0xB1, 0x12)             # 레코드 뱅크
 nh.ab(0x8D, TBL7 + BSET)                          # ★NMI 가 R7 을 되돌릴 때 볼 사본도 같이 갱신
@@ -1361,9 +1477,7 @@ nh.ab(0xB9, NRESL); nh.ab(0xCD, TMP); nh.rel(0xD0, "nsnext")
 nh.ab(0xB9, NRESH); nh.ab(0xCD, TMP2); nh.rel(0xF0, "nfound")
 nh.L("nsnext"); nh.raw(0xC8); nh.rel(0xD0, "nsrch")
 nh.L("nnofound")
-nh.ab(0xAD, NNEXT); nh.imm(0xC9, NNSLOT); nh.rel(0x90, "nok")
-nh.imm(0xA9, 0x00); nh.ab(0x8D, NNEXT)
-nh.L("nok")
+nh.ab(0x20, NWRAP)                               # ★2026-10-04 감기 규칙(앞 NSOFT 칸 / 넘치면 그림 칸)은 NWRAP 이 정한다
 nh.ab(0xAC, NNEXT)
 nh.ab(0xAD, TMP); nh.ab(0x99, NRESL)
 nh.ab(0xAD, TMP2); nh.ab(0x99, NRESH)
@@ -1387,7 +1501,7 @@ nh.L("nnc")
 nh.raw(0x68, 0xA8, 0xE8)
 nh.raw(0x4C, 0, 0); nh.fix16.append((len(nh.b) - 2, "neach", 0))
 nh.L("nbuilt")
-nh.ab(0x20, SETCNT)
+nh.ab(0x20, SETCNTN)                              # ★업로드 순번을 0 으로 되감지 않는다(높은 칸이 굶던 문제)
 # --- 텍스트를 슬롯 코드로 치환하며 NBUF 로
 nh.ab(0xAD, NT1); nh.zp(0x85, 0x12)
 nh.ab(0xAD, NT2); nh.zp(0x85, 0x13)
@@ -1466,7 +1580,11 @@ nhook = nh.build()
 #   1차: $BD 가 있는지만 본다 -> 대사·이름은 없으므로 즉시 빠져나간다(비용 ~200사이클)
 #   2차: $BD <id> 를 슬롯 타일 1바이트로 바꾸고 뒤를 왼쪽으로 당긴다(dst<=src 라 제자리 안전)
 # 슬롯은 **대사 풀**에서 딴다. UI 문자열과 대사는 같은 창을 쓰므로 동시에 뜨지 않는다.
-UISCAN = 64
+# ★2026-10-05 64 -> $70 (사용자 보고 「상태 목록이 꽉 찬 상태에서 고르려 하면 목록이 안 보인다」).
+#   나카지마·유미코 + 악마 7마리 = 9명 상태 목록은 버퍼가 78바이트($0590~$05DD)다. 64칸에서 멈추면
+#   그 앞까지만 당겨지고 뒤에는 옛 꼬리(「곤」 한 줄)가 남아 줄이 하나 늘고, 창이 위로 밀려 「리케」만 보였다.
+#   종결자가 64칸 안에 있는 문장은 지금처럼 종결자에서 멈추므로 달라지지 않는다. $0590+$6F = $05FF 까지.
+UISCAN = 0x70
 UIID, UISX, UITILE, UISY = 0x67F0, 0x67F1, 0x67F2, 0x67F3
 UITERM, UISRC = 0x67F4, 0x67F5     # 종결자 보관 / 종결자의 원본 색인
 u = Asm(UIHOOK)
@@ -1499,7 +1617,7 @@ u.imm(0xC9, 0xFB); u.rel(0xF0, "done")
 u.imm(0xC9, 0xFE); u.rel(0xF0, "done")
 u.imm(0xC9, 0xFF); u.rel(0xF0, "done")
 u.raw(0xE8, 0xC8); u.imm(0xE0, UISCAN); u.rel(0xD0, "lp")
-u.ab_lab(0x4C, "exit", 0)          # 종결자를 못 만난 채 64칸을 다 봤다 -> 패딩 없이 나간다
+u.ab_lab(0x4C, "exit", 0)          # 종결자를 못 만난 채 UISCAN 칸을 다 봤다 -> 패딩 없이 나간다
 # ★★2026-09-07. 압축만 하고 끝내면 **꼬리가 남는다.**
 #   뱅크$0D 는 뱅크$0C 의 문장을 **고정 길이로** 퍼 온다(8곳, 예: $AE18 이 $8FE5 에서 14바이트).
 #   이스케이프 3개를 풀면 3바이트가 줄어 종결자가 3칸 앞으로 오고, 그 뒤에 원본 꼬리가
@@ -1611,8 +1729,9 @@ if UI_HOOK and UI_PATCH:
     f.ab(0xEC, BF_W); f.rel(0xB0, "escraw")  # $BD 가 마지막 바이트면 진짜 ✕ 다
     f.ab(0xBD, 0x0588)
     f.imm(0xC9, NUI); f.rel(0xB0, "escraw")  # id 가 범위 밖이면 진짜 ✕ 다
+    for _r in UI_RESERVED: f.imm(0xC9, _r); f.rel(0xF0, "escraw")   # ✕✕ / ✕－ 는 상성표 기호
     f.raw(0xE8)
-    f.ab(0x20, RES)
+    f.ab(0x20, RESN)                         # ★2026-10-04 이름 풀에서 (대사 창이 열려도 안 덮이게)
     f.ab(0xEE, BF_DEF)
     f.ab_lab(0x4C, "put", 0)
     f.L("escraw")
@@ -1643,8 +1762,9 @@ if UI_HOOK and UI_PATCH:
     f.ab(0xEC, BF_END); f.rel(0xB0, "traw")
     f.ab(0xBD, 0x0590)
     f.imm(0xC9, NUI); f.rel(0xB0, "traw")
+    for _r in UI_RESERVED: f.imm(0xC9, _r); f.rel(0xF0, "traw")
     f.raw(0xE8)
-    f.ab(0x20, RES)
+    f.ab(0x20, RESN)
     f.ab_lab(0x4C, "tput", 0)
     f.L("traw")
     f.imm(0xA9, ESC)
@@ -1701,6 +1821,154 @@ if UI_HOOK and UI_PATCH:
     assert UIHOOK + len(uihook) <= TRAPFIX and TRAPFIX + len(trapfix) <= UIID, \
         "함정 창 훅 %d바이트가 $%04X~$%04X 를 벗어난다" % (len(trapfix), TRAPFIX, UIID)
 
+# ---------------------------------------------------------------- 2026-10-04 이름 풀 감기 / 그림 칸 되돌리기 / 업로드 순번
+# (설계는 위 EXTRA 정의 옆 주석) 점프표로 주소를 고정해 두고, 이름 훅·블록 훅이 상수 주소로 부른다.
+assert UI_HOOK and UI_PATCH, "RESN 은 UI 글리프표(UIGLY)를 쓴다 - UI 훅이 켜져 있어야 한다"
+# (NWRAP 앞부분은 아래 w, 뒷부분 w3~ 는 $6C00 페이지 x 끝에 붙는다)
+# --- SETCNTN: CNT 만 다시 잡고 업로드 순번은 되감지 않는다. 새 칸(NLO)이 순번보다 앞이면 거기로만 당긴다.
+z = Asm(SETCNTN)
+z.ab(0xAD, NCNT); z.raw(0x18); z.imm(0x69, NDLG); z.ab(0x8D, TMP)
+z.ab(0xAD, NEXT); z.ab(0xCD, TMP); z.rel(0xB0, "sok"); z.ab(0xAD, TMP)
+z.L("sok"); z.ab(0x8D, CNT)
+z.ab(0xAD, NLO); z.imm(0xC9, 0xFF); z.rel(0xF0, "sk1")             # 새 칸 없음
+# 밀린 칸(PENDHI)이 순번 앞에 남아 있으면 min(SLOT, NLO) / 없으면 새 칸으로 바로 뛴다
+z.ab(0xAD, SLOT); z.ab(0xCD, PENDHI); z.ab(0xAD, NLO); z.rel(0xB0, "jump")   # LDA 는 C 를 안 건드린다
+z.ab(0xCD, SLOT); z.rel(0xB0, "ph")
+z.L("jump"); z.ab(0x8D, SLOT); z.imm(0xA9, 0x00); z.ab(0x8D, CHK)
+z.L("ph")                                                         # PENDHI = max(PENDHI, 이번 묶음 끝)
+z.ab(0xAD, NNEXT); z.raw(0x18); z.imm(0x69, NDLG); z.ab(0xCD, PENDHI); z.rel(0x90, "sk1"); z.ab(0x8D, PENDHI)
+z.L("sk1")
+z.ab(0xAD, SLOT); z.ab(0xCD, CNT); z.rel(0x90, "sk2")
+z.imm(0xA9, 0x00); z.ab(0x8D, SLOT); z.ab(0x8D, CHK)
+z.L("sk2")
+z.imm(0xA9, 0xFF); z.ab(0x8D, NLO)
+z.raw(0x60)
+x = Asm(EXTRA)
+x.ab_lab(0x4C, "resn", 0); x.ab_lab(0x4C, "chkblk", 0)
+# --- CHKBLK: Z=1 이면 이번 프레임에 올려도 된다. UPN = 올릴 칸 수 (블록 대기 없음 UPLOAD_PER_FRAME / 한 줄 4칸 이하 블록 대기 1)
+x.L("chkblk")
+# ★한 프레임 2칸은 무거운 프레임에서 NMI 가 vblank 를 3스캔라인 넘겼다(v52 최대 261 -> 266, 실측). 1칸으로 둔다.
+x.imm(0xA9, UPLOAD_PER_FRAME); x.ab(0x8D, UPN)
+x.zp(0xA5, 0x0B); x.imm(0x29, 0x01); x.rel(0xF0, "cok")
+if UPLOAD_PER_FRAME != 1: x.imm(0xA9, 0x01); x.ab(0x8D, UPN)
+x.ab(0xAD, 0x0583); x.imm(0xC9, 0x01); x.rel(0xD0, "cno")  # 한 줄짜리
+x.ab(0xAD, 0x0584); x.rel(0xD0, "cno")                     # 세로쓰기(그림) 아님
+x.ab(0xAD, 0x0582); x.imm(0xC9, 0x05); x.rel(0xB0, "cno")  # 4칸 이하
+x.imm(0xA9, 0x00)
+x.L("cok"); x.raw(0x60)
+x.L("cno"); x.imm(0xA9, 0x01); x.raw(0x60)
+# --- RESN: UI 훅의 res 와 같지만 **이름 풀**에서 칸을 받는다. A = UI 음절 id -> A = 타일. X·Y 보존
+x.L("resn")
+x.ab(0x8E, UISX); x.ab(0x8C, UISY); x.ab(0x8D, UIID)
+x.raw(0x18); x.imm(0x69, UIBASE & 0xFF); x.ab(0x8D, TMP)
+x.imm(0xA9, 0x00); x.imm(0x69, UIBASE >> 8); x.ab(0x8D, TMP2)
+x.imm(0xA0, 0x00)
+x.L("rsr")
+x.ab(0xCC, NNEXT); x.rel(0xF0, "rnf")
+x.ab(0xB9, NRESL); x.ab(0xCD, TMP); x.rel(0xD0, "rsn")
+x.ab(0xB9, NRESH); x.ab(0xCD, TMP2); x.rel(0xF0, "rhit")
+x.L("rsn"); x.raw(0xC8); x.rel(0xD0, "rsr")
+x.L("rnf")
+x.ab(0x20, NWRAP)
+x.ab(0xAC, NNEXT)
+x.ab(0xAD, TMP); x.ab(0x99, NRESL)
+x.ab(0xAD, TMP2); x.ab(0x99, NRESH)
+x.ab(0xEE, NNEXT)
+x.ab(0xAD, NNEXT); x.ab(0xCD, NCNT); x.rel(0x90, "rhw"); x.ab(0x8D, NCNT)
+x.L("rhw")
+x.raw(0x98, 0x18); x.imm(0x69, NDLG); x.raw(0xA8)           # Y = 실제 슬롯
+x.raw(0x98, 0x4A, 0x4A, 0x4A, 0x4A)
+x.raw(0x18); x.imm(0x69, SRCBASE >> 8); x.ab_lab(0x8D, "rgd", 2)
+x.raw(0x98, 0x0A, 0x0A, 0x0A, 0x0A); x.ab_lab(0x8D, "rgd", 1)
+x.ab(0xAD, UIID); x.imm(0x29, 0x0F); x.raw(0x0A, 0x0A, 0x0A, 0x0A); x.ab_lab(0x8D, "rgs", 1)
+x.ab(0xAD, UIID); x.raw(0x4A, 0x4A, 0x4A, 0x4A)
+x.raw(0x18); x.imm(0x69, UIGLY >> 8); x.ab_lab(0x8D, "rgs", 2)
+x.raw(0x98, 0x48); x.imm(0xA0, 0x00)
+x.L("rgc")
+x.L("rgs"); x.ab(0xB9, UIGLY)
+x.L("rgd"); x.ab(0x99, SRCBASE)
+x.raw(0xC8); x.imm(0xC0, 0x10); x.rel(0xD0, "rgc")
+x.ab(0x20, SETCNTN)
+x.raw(0x68, 0xA8)
+x.raw(0x4C, 0, 0); x.fix16.append((len(x.b) - 2, "rtile", 0))
+x.L("rhit")
+x.raw(0x98, 0x18); x.imm(0x69, NDLG); x.raw(0xA8)
+x.L("rtile")
+x.raw(0x98, 0xAA); x.ab(0xBD, SLOTTAB); x.ab(0x8D, UITILE)
+x.ab(0xAE, UISX); x.ab(0xAC, UISY); x.ab(0xAD, UITILE); x.raw(0x60)
+# --- NWRAP 뒷부분
+x.L("w3")
+x.ab(0xAD, NNEXT); x.imm(0xC9, NSOFT); x.rel(0x90, "w4")
+x.imm(0xA9, 0x01); x.ab(0x8D, GFXDIRTY)
+x.L("w4")
+x.ab(0xAD, NNEXT); x.raw(0x18); x.imm(0x69, NDLG)            # NLO = min(NLO, 실제 슬롯)
+x.ab(0xCD, NLO); x.rel(0xB0, "w5"); x.ab(0x8D, NLO)
+x.L("w5")
+x.ab(0xEE, NBURST); x.rel(0xD0, "w6"); x.ab(0xCE, NBURST)    # 255 에서 멈춤
+x.L("w6"); x.raw(0x60)
+extra = x.build()
+# --- NWRAP: 새 칸을 NNEXT 에 잡기 **직전**에 부른다. X 보존, Y 는 깨짐(호출자가 NNEXT 로 다시 읽는다)
+w = Asm(NWRAP)
+w.zp(0xA5, 0x0C); w.raw(0x38); w.ab(0xED, NLAST); w.imm(0xC9, NGAP); w.rel(0x90, "same")
+w.imm(0xA9, 0x00); w.ab(0x8D, NBURST)                      # 새 묶음(새 화면)
+w.ab(0xAD, GFXDIRTY); w.rel(0xF0, "same")
+w.ab(0x8D, RESTREQ); w.imm(0xA9, 0x00); w.ab(0x8D, GFXDIRTY)   # 지난 묶음이 그림 칸을 썼다 -> 되돌리기 예약
+w.L("same")
+w.zp(0xA5, 0x0C); w.ab(0x8D, NLAST)
+w.ab(0xAD, NNEXT); w.imm(0xC9, NNSLOT); w.rel(0x90, "w1")
+w.imm(0xA9, 0x00); w.ab(0x8D, NNEXT); w.rel(0xF0, "wj")     # 풀 끝: 강제 감기 (예전과 같다)
+w.L("w1")
+w.ab(0xAC, NBURST); w.imm(0xC0, NSOFT); w.rel(0xD0, "w2")
+w.imm(0xC9, NSOFT); w.rel(0xB0, "wj")                        # 이미 그림 칸 쪽이면 그대로
+w.imm(0xA9, NSOFT); w.ab(0x8D, NNEXT); w.rel(0xD0, "wj")     # 이 묶음이 앞 칸을 다 썼다 -> 그림 칸으로 넘친다
+w.L("w2")
+w.rel(0xB0, "wj")                                            # 묶음이 NSOFT 보다 크다: 풀 전체로 계속
+w.imm(0xC9, NSOFT); w.rel(0x90, "wj")
+w.imm(0xA9, 0x00); w.ab(0x8D, NNEXT)                         # 평소 감기: 앞 NSOFT 칸 안에서
+w.L("wj"); w.ab(0x4C, 0)  # -> 뒷부분 (아래에서 주소를 채운다)
+nwrap1 = w.build()
+nwrap1 = nwrap1[:-2] + bytes([x.lab["w3"] & 0xFF, x.lab["w3"] >> 8])
+assert TRAPFIX + len(trapfix) <= NWRAP and NWRAP + len(nwrap1) <= UIID, "NWRAP 앞부분 %d바이트가 자리를 벗어난다" % len(nwrap1)
+assert EXTRA + len(extra) <= EXTRA + 0x100, "새 루틴 %d바이트가 $6C00 페이지를 넘는다" % len(extra)
+setcntn = z.build()
+assert SETCNTN + len(setcntn) <= NDSTL, "SETCNTN %d바이트가 모드표를 침범" % len(setcntn)
+# --- RESTORE / CHKBLK ($62A0~)
+y = Asm(EXTRA2)
+y.ab_lab(0x4C, "restore", 0)
+GFX0 = SRCBASE + (NSLOT - NGFX) * 16                       # 그림 칸 글리프 버퍼(연속)
+assert 256 < NGFX * 16 <= 256 + 128
+y.L("restore")                                             # ★이름 훅 안에서만 부른다 (R6 = 뱅크$10)
+y.imm(0xA0, 0x00)
+y.L("r1"); y.ab(0xB9, GFXDATA); y.ab(0x99, GFX0); y.raw(0xC8); y.rel(0xD0, "r1")
+y.imm(0xA0, NGFX * 16 - 256 - 1)
+y.L("r2"); y.ab(0xB9, GFXDATA + 256); y.ab(0x99, GFX0 + 256); y.raw(0x88); y.rel(0x10, "r2")
+y.imm(0xA9, 0x00); y.ab(0x8D, RESTREQ)
+y.imm(0xA9, NSLOT - NGFX); y.ab(0xCD, SLOT); y.rel(0xB0, "r3"); y.ab(0x8D, SLOT)   # 곧 올라가게
+y.L("r3"); y.imm(0xA9, 0xFF); y.ab(0x8D, PENDHI); y.raw(0x60)   # 그림 칸이 밀렸다 (한 바퀴 돌 때까지)
+extra2 = y.build()
+assert HOOK + len(hook) <= EXTRA2, "메시지 훅(%d바이트)이 $%04X 를 침범" % (len(hook), EXTRA2)
+assert EXTRA2 + len(extra2) <= NLAST, "RESTORE/CHKBLK %d바이트가 변수 영역을 침범" % len(extra2)
+print("이름 풀 감기: 평소 앞 %d칸 / 넘치면 그림 칸 %d칸, 묶음 간격 %d프레임 (새 루틴 %d+%d바이트)"
+      % (NSOFT, NGFX, NGAP, len(extra) + len(setcntn) + len(nwrap1), len(extra2)))
+
+# --- ENDCHK: 메시지 훅 첫머리에서 부른다. $BE/$BF = 이번 메시지 주소. 엔딩 대사(ENDING_MSGS)면 $0E/$0D 가 33 일 때 31 로.
+#   옛 세이브(옛 메시지 훅)에서는 안 불리므로 v52 처럼 가나로 보일 뿐 깨지지는 않는다.
+assert len({_a >> 8 for _a in ENDING_MSGS}) == 1
+ec = Asm(ENDCHK)
+ec.zp(0xA5, 0xBF); ec.imm(0xC9, ENDING_MSGS[0] >> 8); ec.rel(0xD0, "out")
+ec.zp(0xA5, 0xBE); ec.imm(0xA2, len(ENDING_MSGS) - 1)
+ec.L("lp"); ec.ab_lab(0xDD, "tbl", 0); ec.rel(0xF0, "yes"); ec.raw(0xCA); ec.rel(0x10, "lp")
+ec.L("out"); ec.raw(0x60)
+ec.L("yes")
+for _zp, _lb in ((0x0E, "k1"), (0x0D, "k2")):
+    ec.zp(0xA5, _zp); ec.imm(0xC9, TS_END); ec.rel(0xD0, _lb)
+    ec.imm(0xA9, TS_NEW); ec.zp(0x85, _zp)
+    ec.L(_lb)
+ec.raw(0x60)
+ec.L("tbl"); ec.raw(*[_a & 0xFF for _a in ENDING_MSGS])
+endchk = ec.build()
+assert ENDCHK + len(endchk) <= NBUF, "ENDCHK %d바이트가 NBUF 를 침범" % len(endchk)
+
 sc = Asm(SETCNT)
 sc.ab(0xAD, NCNT); sc.raw(0x18); sc.imm(0x69, NDLG); sc.ab(0x8D, TMP)
 sc.ab(0xAD, NEXT); sc.ab(0xCD, TMP); sc.rel(0xB0, "sok"); sc.ab(0xAD, TMP)
@@ -1727,11 +1995,22 @@ img[SLOT - 0x6000] = 0; img[CHK - 0x6000] = 0; img[CNT - 0x6000] = 0
 img[HOOK - 0x6000:HOOK - 0x6000 + len(hook)] = hook
 img[NHOOK - 0x6000:NHOOK - 0x6000 + len(nhook)] = nhook
 img[SETCNT - 0x6000:SETCNT - 0x6000 + len(setcnt)] = setcnt
+assert SETCNT + len(setcnt) <= ENDCHK and not any(img[ENDCHK - 0x6000:ENDCHK - 0x6000 + len(endchk)])
+img[ENDCHK - 0x6000:ENDCHK - 0x6000 + len(endchk)] = endchk
+assert not any(img[EXTRA - 0x6000:EXTRA - 0x6000 + len(extra)]), "$6C00 페이지에 이미 뭔가 있다"
+img[EXTRA - 0x6000:EXTRA - 0x6000 + len(extra)] = extra
+assert not any(img[EXTRA2 - 0x6000:PENDHI + 1 - 0x6000]), "$62A0~ 에 이미 뭔가 있다"
+img[EXTRA2 - 0x6000:EXTRA2 - 0x6000 + len(extra2)] = extra2
+img[NLO - 0x6000] = 0xFF
+assert not any(img[SETCNTN - 0x6000:SETCNTN - 0x6000 + len(setcntn)]), "$6B70 에 이미 뭔가 있다"
+img[SETCNTN - 0x6000:SETCNTN - 0x6000 + len(setcntn)] = setcntn
 if UI_HOOK and UI_PATCH:
     img[UIHOOK - 0x6000:UIHOOK - 0x6000 + len(uihook)] = uihook
     img[BLKFIX - 0x6000:BLKFIX - 0x6000 + len(blkfix)] = blkfix
     assert not any(img[TRAPFIX - 0x6000:TRAPFIX - 0x6000 + len(trapfix)]), "함정 창 훅 자리에 이미 뭔가 있다"
     img[TRAPFIX - 0x6000:TRAPFIX - 0x6000 + len(trapfix)] = trapfix
+    assert not any(img[NWRAP - 0x6000:NWRAP - 0x6000 + len(nwrap1)]), "$67A0 에 이미 뭔가 있다"
+    img[NWRAP - 0x6000:NWRAP - 0x6000 + len(nwrap1)] = nwrap1
     for _i, _g in enumerate(uiglyph):       # UI 글리프표도 PRG-RAM 으로 (뱅크 전환 제거용)
         img[UIGLY - 0x6000 + 16 * _i:UIGLY - 0x6000 + 16 * _i + 16] = _g
 for _base, _vals in ((NDSTL, MODE_DSTL), (NDSTH, MODE_DSTH), (NCAPT, MODE_CAP),
@@ -1957,6 +2236,30 @@ if M195:
     rom[7] = (rom[7] & 0x0F) | 0xC0                              # 매퍼 195
     print("매퍼195 전환: CHR 256KB, 코드 $00~$FF 전부 CHR-RAM, 정적폰트 2KB 부팅 업로드 %d바이트"
           % len(_up195))
+    # ★2026-10-04 엔딩 얼굴 장면 전용 뱅크 (위 ENDING_MSGS 주석).
+    #   ★타일셋33(=표 32번, 뱅크 28~31) 자체를 바꾸면 안 된다. 대사창이 열리기 전 풍경이 그 자리(창 밑)에 같은 코드를 쓰고 있어서
+    #     처음 시험판에서 산 그림 위에 한글 조각이 떴다(코드 무늬 시험 롬으로 화면에 보이는 코드를 전수 판독해 확인).
+    #   -> 28~31 을 복사한 전용 뱅크에 음절을 굽고, 엔딩 대사가 시작될 때만 타일셋 번호를 33 -> TS_NEW 로 바꾼다.
+    #      얼굴 장면은 위쪽(초상화)이 $0D=35, 아래쪽(풍경·대사창)이 $0E=33 이고 $0E 는 스프라이트0 히트 뒤 화면 중간에 적용된다.
+    #      END 화면(11:3)은 $0D=33. 대사창은 첫 대사부터 장면 끝까지 계속 열려 있고, 그동안 창 밖에서 보이는 코드(105종)와
+    #      END 화면($DD~$F7)은 END_CODES 와 겹치지 않는다.
+    _ce = HDR + rom[4] * 16384
+    assert (rom[fx(TBL_BG) + (TS_END - 1) * 2], rom[fx(TBL_BG) + (TS_END - 1) * 2 + 1]) == (0x1C, 0x1E), "타일셋33 이 예상과 다르다"
+    assert not any(rom[_ce + END_BANK * 1024:_ce + (END_BANK + 4) * 1024]), "엔딩 전용 뱅크 자리가 비어 있지 않다"
+    rom[_ce + END_BANK * 1024:_ce + (END_BANK + 4) * 1024] = rom[_ce + 28 * 1024:_ce + 32 * 1024]
+    for _ch, _code in END_MAP.items():
+        _o = _ce + (END_BANK + (_code >> 6)) * 1024 + (_code & 0x3F) * 16
+        rom[_o:_o + 16] = bytes(G.to_chr(G.bitmap(_ch)))
+    # ★옛 세이브스테이트 호환: 고정뱅크·뱅크9 코드는 건드리지 않는다. 옛 세이브는 PRG-RAM 이 옛것이라
+    #   고정뱅크가 새 PRG-RAM 표에 기대면 화면이 통째로 깨진다(락스텝이 $C690 에서 잡았다).
+    #   -> 게임이 **안 쓰는** 타일셋 칸 하나(TS_NEW-1)를 롬에서 이 뱅크로 돌리고, 전환은 PRG-RAM 의 메시지 훅이 한다.
+    #   $0D/$0E 에 들어가는 값은 즉값(15 16 17 25 26 27 33 36)·장면표 뱅크5 $B9B7(25 28 29 30 32 33 35)·
+    #   던전 계산(1~12)·$0E 복사뿐이다(쓰기 명령 전수조사, 2026-10-04). 31(=표 30번, 뱅크 $30~$33)과 34 는 아무도 안 쓴다.
+    assert (rom[fx(TBL_BG) + (TS_NEW - 1) * 2], rom[fx(TBL_BG) + (TS_NEW - 1) * 2 + 1]) == (0x30, 0x32),         "타일셋 %d 칸이 예상과 다르다" % TS_NEW
+    rom[fx(TBL_BG) + (TS_NEW - 1) * 2] = END_BANK
+    rom[fx(TBL_BG) + (TS_NEW - 1) * 2 + 1] = END_BANK + 2
+    print("엔딩 얼굴 장면: 안 쓰는 타일셋 %d -> CHR $%02X~$%02X (엔딩 대사 때만 메시지 훅이 전환), 음절 %d개를 전용 코드로"
+          % (TS_NEW, END_BANK, END_BANK + 3, len(END_MAP)))
 
 # ---------------------------------------------------------------- DON 그래픽 -> "쾅!" (2026-09-04, 사용자 지시)
 # 전투 시작 연출 "DON" 은 대사·이름 시스템과 무관한 **OAM 스프라이트**(패턴테이블0,

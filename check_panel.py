@@ -81,6 +81,19 @@ if moved:
 else:
     print("    %d개 전부 원본과 동일 ✔" % len(untouched))
 
+print("[5] 소환 화면 소지금 상자 (2026-10-05, 뱅크5 $BC04 — 패널 표 밖이라 잠금에서 빠져 덮였던 자리)")
+orig = open("archive/roms/mt1_orig_jp.nes", "rb").read()
+OCHR = 16 + orig[4] * 16384
+otile = lambda code: bytes(orig[OCHR + (0x02 if code < 0x40 else 0x03) * 1024 + (code & 0x3F) * 16:][:16])
+mb = [c for c in rom[B.MONEYBOX:B.MONEYBOX + 4] if c != 0xFF]
+got = "".join(([ch for ch in B.MONEY_KO if bytes(G.to_chr(G.bitmap(ch))) == tile(rom, c)] or ["?"])[0] for c in mb)
+yen = tile(rom, 0x5F) == otile(0x5F)
+if got != B.MONEY_KO or not yen:
+    bad += 1
+    print("    ★글자 %s / 돈 기호 $5F 원판 그대로 %s" % (got, yen))
+else:
+    print("    「%s」 + 돈 기호 $5F 원판 그대로 ✔" % got)
+
 print()
 print("=== 패널 검증 통과 ===" if not bad else "=== ★%d건 실패 ===" % bad)
 sys.exit(1 if bad else 0)

@@ -76,6 +76,9 @@ for off, ln, ko in ent:
                   ko.rstrip().replace("<59>", ""))
     for _t in ("<FF>", "<FE>", "<FB>"):
         if want.endswith(_t): want = want[:-4]; break
+    # ★2026-10-05 빌더가 원판 「。」($62)를 번역문 바로 뒤로 당긴 항목(B.DOTFIX 「당김」)은 기대값 끝에 「。」가 붙는다.
+    if any(_o == off and _k == "당김" for _o, _k, _x in B.DOTFIX):
+        want += "<62>"
     # 롬 디코더는 끝의 빈 칸을 버린다 - 양쪽 다 잘라서 비교
     maxuse = max(maxuse, n.prgram[B.NEXT - 0x6000])
     if got.rstrip() != want.rstrip():

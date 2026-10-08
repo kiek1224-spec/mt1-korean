@@ -52,7 +52,7 @@
 2. `python mt1_ds_window.py <롬 파일>` — Python 3 기본 포함 tkinter 로 뜹니다
 
 <p align="center">
-  <img src="docs/images/ds_window.png" alt="ds_bridge.lua - 게임 화면 옆 별도 창에 층·좌표·한글 범례와 함께 지도가 크게 그려진다" width="860">
+  <img src="docs/images/ds_window.png" alt="ds_bridge.lua - 게임 화면 옆 별도 창에 층 지도(일방통행 화살표 포함)·한글 범례·MAG·마카·패스워드 패널이 함께 나온다" width="900">
 </p>
 
 표식: 올라가는/내려가는 계단 · 엘리베이터 · 보물상자 · 아메지스트 · 정보 · 사람 · 가게 · 회복의 샘 · 여신상 · 사교의 관 · 고정 전투 · **텔레포트 칸과 도착 칸**
